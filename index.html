@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wine Cellar Tracker</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'wine-red': '#800020',
+                        'bg-dark': '#262626',
+                        'text-light': '#f3f4f6',
+                        'accent-gold': '#FFD700',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .card {
+            box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .inventory-list {
+            max-height: 50vh;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 bg-gray-100">
+
+    <div id="app-container" class="max-w-4xl mx-auto">
+        <header class="text-center py-6">
+            <h1 class="text-4xl font-extrabold text-wine-red tracking-tight">
+                🍷 Digital Wine Cellar
+            </h1>
+            <p class="text-gray-600 mt-2">Scan, Track, and Enjoy Your Inventory.</p>
+            <div id="user-info" class="mt-4 text-sm text-gray-500">
+                <span class="font-semibold">User ID:</span> <span id="user-id">Loading...</span>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Scan and Add Wine Panel -->
+            <section class="card bg-white p-6 rounded-xl">
+                <h2 class="text-2xl font-bold mb-4 text-gray-800 border-b pb-2">1. Scan & Identify Wine</h2>
+                
+                <input type="file" id="wineImage" accept="image/*" class="w-full text-sm text-gray-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-full file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-wine-red/10 file:text-wine-red
+                    hover:file:bg-wine-red/20
+                ">
+                
+                <div id="loadingIndicator" class="hidden mt-4 text-center">
+                    <div class="animate-spin inline-block w-6 h-6 border-4 border-wine-red border-t-transparent rounded-full"></div>
+                    <p class="text-wine-red mt-2">Analyzing wine label...</p>
+                </div>
+
+                <div id="statusMessage" class="mt-4 p-3 rounded-lg text-sm hidden" role="alert"></div>
+
+                <!-- Detected Wine Details Form -->
+                <div id="detectedWineForm" class="mt-6 p-4 border border-gray-200 rounded-lg bg-gray-50 hidden">
+                    <h3 class="text-xl font-semibold mb-3 text-gray-700">Confirm Details</h3>
+                    <form onsubmit="event.preventDefault(); saveWine();">
+                        <div class="mb-4">
+                            <label for="wineNameInput" class="block text-sm font-medium text-gray-700">Wine Name</label>
+                            <input type="text" id="wineNameInput" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:ring-wine-red focus:border-wine-red">
+                        </div>
+                        <div class="mb-4">
+                            <label for="wineYearInput" class="block text-sm font-medium text-gray-700">Vintage Year</label>
+                            <input type="number" id="wineYearInput" required min="1900" max="2100" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:ring-wine-red focus:border-wine-red">
+                        </div>
+                        <div class="mb-4">
+                            <label for="bottleCountInput" class="block text-sm font-medium text-gray-700">Number of Bottles to Add</label>
+                            <input type="number" id="bottleCountInput" value="1" min="1" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:ring-wine-red focus:border-wine-red">
+                        </div>
+                        <button type="submit" class="w-full bg-wine-red text-white py-2 px-4 rounded-lg font-semibold hover:bg-wine-red/90 transition duration-150">
+                            Add to Cellar
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Preview Image -->
+                <div id="imagePreviewContainer" class="mt-4 hidden">
+                    <h3 class="text-lg font-semibold text-gray-700 mb-2">Image Preview:</h3>
+                    <img id="imagePreview" class="max-w-full h-auto rounded-lg shadow-md border border-gray-200">
+                </div>
+
+            </section>
+
+            <!-- Inventory List Panel -->
+            <section class="card bg-white p-6 rounded-xl">
+                <h2 class="text-2xl font-bold mb-4 text-gray-800 border-b pb-2">2. My Cellar Inventory</h2>
+                
+                <div id="inventoryList" class="inventory-list divide-y divide-gray-200">
+                    <!-- Wine items will be injected here -->
+                    <p id="emptyMessage" class="text-gray-500 text-center py-8">Your cellar is empty. Scan a bottle to begin!</p>
+                </div>
+                
+                <p id="listStatus" class="mt-4 text-sm text-gray-500 text-center hidden">Updating list...</p>
+            </section>
+        </main>
+    </div>
+
+    <!-- Firebase and Application Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, updateDoc, onSnapshot, collection, query, where, getDocs, setLogLevel, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // --- Firebase Initialization ---
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let inventoryRef = null;
+        
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const statusMessage = document.getElementById('statusMessage');
+        const detectedWineForm = document.getElementById('detectedWineForm');
+        const inventoryList = document.getElementById('inventoryList');
+        const emptyMessage = document.getElementById('emptyMessage');
+        const imageInput = document.getElementById('wineImage');
+        const imagePreview = document.getElementById('imagePreview');
+        const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+        const userIdSpan = document.getElementById('user-id');
+
+        setLogLevel('Debug'); // Enable debug logging for Firestore
+
+        async function initFirebase() {
+            try {
+                if (!firebaseConfig || !Object.keys(firebaseConfig).length) {
+                    throw new Error("Firebase configuration is missing.");
+                }
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // --- Authentication ---
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        // Display the full user ID
+                        userIdSpan.textContent = userId; 
+                        // Define the collection path based on the authenticated user ID (Private Data)
+                        inventoryRef = collection(db, `artifacts/${appId}/users/${userId}/wine_inventory`);
+                        listenForInventoryUpdates();
+                    } else {
+                        setStatus('Error: Could not authenticate.', 'bg-red-100 text-red-700');
+                    }
+                });
+
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+                setStatus(`Fatal Error: ${error.message}. Check console for details.`, 'bg-red-100 text-red-700');
+            }
+        }
+
+        // --- Utility Functions ---
+
+        /** Sets a status message in the UI */
+        function setStatus(message, classes = 'bg-blue-100 text-blue-700') {
+            statusMessage.textContent = message;
+            statusMessage.className = `mt-4 p-3 rounded-lg text-sm ${classes}`;
+            statusMessage.classList.remove('hidden');
+        }
+
+        /** Hides all result/status elements */
+        function hideResults() {
+            loadingIndicator.classList.add('hidden');
+            statusMessage.classList.add('hidden');
+            detectedWineForm.classList.add('hidden');
+            imagePreviewContainer.classList.add('hidden');
+        }
+
+        /** Converts a File object to a base64 data URL */
+        function getBase64Image(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = error => reject(error);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // --- Gemini API Logic ---
+
+        const GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025";
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+        async function callGeminiApi(prompt, base64ImageData) {
+            const apiKey = ""; // Canvas will provide this automatically
+
+            const payload = {
+                contents: [{
+                    parts: [
+                        { text: prompt },
+                        {
+                            inlineData: {
+                                mimeType: "image/jpeg", // Assuming all images are treated as JPEG
+                                data: base64ImageData
+                            }
+                        }
+                    ]
+                }],
+                systemInstruction: {
+                    parts: [{ text: "You are an expert OCR and object recognition system for wine labels. Your task is to extract the Wine Name and the Vintage Year (Production Year) from the provided image of a wine bottle label. If a year is found, it must be four digits. Return the result in a JSON object." }]
+                },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "wineName": { "type": "STRING", "description": "The full name of the wine, including producer." },
+                            "year": { "type": "STRING", "description": "The 4-digit vintage year. If not found, use 'N/A'." }
+                        },
+                        required: ["wineName", "year"]
+                    }
+                }
+            };
+
+            const maxRetries = 3;
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(`${API_URL}?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorBody = await response.json();
+                        throw new Error(`API Error: ${response.status} - ${JSON.stringify(errorBody)}`);
+                    }
+
+                    const result = await response.json();
+                    const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                    if (!jsonText) {
+                        throw new Error("Model response was empty or incorrectly structured.");
+                    }
+
+                    return JSON.parse(jsonText);
+                } catch (error) {
+                    console.warn(`Attempt ${attempt + 1} failed:`, error.message);
+                    if (attempt === maxRetries - 1) throw error;
+                    const delay = Math.pow(2, attempt) * 1000; // Exponential backoff
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        async function handleImageScan() {
+            hideResults();
+            const file = imageInput.files[0];
+            if (!file) {
+                setStatus('Please select an image of a wine bottle.', 'bg-yellow-100 text-yellow-700');
+                return;
+            }
+
+            loadingIndicator.classList.remove('hidden');
+
+            try {
+                // 1. Show Image Preview
+                imagePreview.src = URL.createObjectURL(file);
+                imagePreviewContainer.classList.remove('hidden');
+
+                // 2. Convert to Base64
+                const base64Data = await getBase64Image(file);
+
+                // 3. Call Gemini for OCR
+                const prompt = "Identify the Wine Name and Vintage Year on this label.";
+                const detectedData = await callGeminiApi(prompt, base64Data);
+
+                loadingIndicator.classList.add('hidden');
+                
+                // 4. Update Form with detected data
+                document.getElementById('wineNameInput').value = detectedData.wineName || '';
+                document.getElementById('wineYearInput').value = detectedData.year && detectedData.year !== 'N/A' ? parseInt(detectedData.year, 10) : '';
+                document.getElementById('bottleCountInput').value = 1;
+                
+                detectedWineForm.classList.remove('hidden');
+                setStatus(`Success! Detected wine details. Please verify and click 'Add to Cellar'.`, 'bg-green-100 text-green-700');
+
+            } catch (error) {
+                loadingIndicator.classList.add('hidden');
+                console.error("Scanning Error:", error);
+                setStatus(`Scanning failed. Please try again or manually enter details. Error: ${error.message.substring(0, 100)}...`, 'bg-red-100 text-red-700');
+            }
+        }
+
+        // Event listener for image selection
+        imageInput.addEventListener('change', handleImageScan);
+
+
+        // --- Firestore Inventory Logic ---
+
+        /** Adds a new wine or increments count if it exists */
+        async function saveWine() {
+            const name = document.getElementById('wineNameInput').value.trim();
+            const year = parseInt(document.getElementById('wineYearInput').value, 10);
+            const count = parseInt(document.getElementById('bottleCountInput').value, 10);
+
+            if (!name || isNaN(year) || isNaN(count) || count < 1) {
+                setStatus('Please enter a valid Name, Year, and Bottle Count.', 'bg-yellow-100 text-yellow-700');
+                return;
+            }
+            if (!inventoryRef) {
+                setStatus('Database not ready. Please wait for authentication.', 'bg-red-100 text-red-700');
+                return;
+            }
+
+            setStatus('Adding wine to cellar...', 'bg-blue-100 text-blue-700');
+
+            // 1. Check if wine already exists (by name and year)
+            const q = query(inventoryRef, where("name", "==", name), where("year", "==", year));
+            const existingDocs = await getDocs(q);
+
+            try {
+                if (existingDocs.empty) {
+                    // 2. Add new wine
+                    await addDoc(inventoryRef, { name, year, count, created: Date.now() });
+                    setStatus(`Successfully added ${count} bottle(s) of ${name} (${year}).`, 'bg-green-100 text-green-700');
+                } else {
+                    // 3. Update existing wine count
+                    const docToUpdate = existingDocs.docs[0];
+                    const newCount = docToUpdate.data().count + count;
+                    await updateDoc(docToUpdate.ref, { count: newCount });
+                    setStatus(`Successfully updated ${name} (${year}). New total: ${newCount} bottle(s).`, 'bg-green-100 text-green-700');
+                }
+                
+                // Reset UI after save
+                detectedWineForm.classList.add('hidden');
+                imageInput.value = '';
+                imagePreviewContainer.classList.add('hidden');
+
+            } catch (error) {
+                console.error("Firestore Save Error:", error);
+                setStatus(`Error saving wine: ${error.message}`, 'bg-red-100 text-red-700');
+            }
+        }
+
+        // Exposed for HTML button click
+        window.saveWine = saveWine; 
+        window.decrementBottleCount = decrementBottleCount; 
+
+        /** Decrements the bottle count for a wine, or deletes the entry if count hits zero. */
+        async function decrementBottleCount(docId, currentCount) {
+            if (!inventoryRef) return;
+            document.getElementById('listStatus').textContent = 'Updating count...';
+            document.getElementById('listStatus').classList.remove('hidden');
+
+            const wineDocRef = doc(db, inventoryRef.path, docId);
+
+            try {
+                if (currentCount > 1) {
+                    // Decrement count
+                    await updateDoc(wineDocRef, { count: currentCount - 1 });
+                    setStatus('Bottle consumed. Inventory updated.', 'bg-orange-100 text-orange-700');
+                } else {
+                    // Count is 1, so remove the bottle from inventory
+                    // NOTE: Firestore updateDoc/deleteDoc will trigger onSnapshot, handling UI refresh.
+                    await updateDoc(wineDocRef, { count: 0 }); // Set to 0 and let listener handle removal, or just delete:
+                    // await deleteDoc(wineDocRef);
+                    setStatus('Last bottle consumed. Wine removed from inventory.', 'bg-gray-100 text-gray-700');
+                }
+            } catch (error) {
+                console.error("Decrement Error:", error);
+                setStatus(`Error updating bottle count: ${error.message}`, 'bg-red-100 text-red-700');
+            }
+            document.getElementById('listStatus').classList.add('hidden');
+        }
+
+
+        /** Sets up the real-time listener for the wine inventory. */
+        function listenForInventoryUpdates() {
+            if (!inventoryRef) return;
+
+            const q = query(inventoryRef);
+            
+            // onSnapshot provides real-time updates
+            onSnapshot(q, (snapshot) => {
+                let html = '';
+                const wines = [];
+
+                snapshot.docs.forEach(doc => {
+                    const data = doc.data();
+                    if (data.count > 0) { // Only show wines you still have
+                        wines.push({ id: doc.id, ...data });
+                    }
+                });
+                
+                // Sort wines by name
+                wines.sort((a, b) => a.name.localeCompare(b.name));
+
+                wines.forEach(wine => {
+                    html += `
+                        <div class="p-4 flex items-center justify-between hover:bg-gray-50 transition duration-150">
+                            <div class="flex-grow">
+                                <p class="text-lg font-semibold text-gray-800">${wine.name} (${wine.year})</p>
+                                <p class="text-sm text-gray-500 mt-0.5">Bottles: <span class="text-wine-red font-bold">${wine.count}</span></p>
+                            </div>
+                            <button onclick="decrementBottleCount('${wine.id}', ${wine.count})"
+                                class="bg-wine-red text-white text-xs font-semibold py-2 px-3 rounded-full shadow-md hover:bg-wine-red/90 transition duration-150 transform hover:scale-105 ml-4">
+                                Remove (1)
+                            </button>
+                        </div>
+                    `;
+                });
+
+                inventoryList.innerHTML = html;
+
+                if (wines.length === 0) {
+                    emptyMessage.classList.remove('hidden');
+                    inventoryList.appendChild(emptyMessage);
+                } else {
+                    emptyMessage.classList.add('hidden');
+                }
+
+                document.getElementById('listStatus').classList.add('hidden');
+
+            }, (error) => {
+                console.error("Firestore Listener Error:", error);
+                document.getElementById('listStatus').textContent = `Failed to load inventory: ${error.message}`;
+                document.getElementById('listStatus').classList.remove('hidden');
+            });
+        }
+        
+        // Start the application
+        initFirebase();
+    </script>
+</body>
+</html>
